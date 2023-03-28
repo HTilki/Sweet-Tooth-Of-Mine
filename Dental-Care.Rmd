@@ -1,0 +1,968 @@
+---
+title: ECONOMETRIE DE PANEL
+author: Hassan TILKI & Corentin DUCLOUX
+output:
+  html_document:
+    theme: flatly
+    number_sections: no
+    highlight: zenburn
+    code_folding: hide
+    toc: true
+    toc_float: true
+    self_contained: true
+editor_options: 
+  chunk_output_type: console
+---
+
+<style>
+.boite1 {
+  padding: 1em;
+  background: FloralWhite;
+  color: black;
+  border: 2px solid DarkSlateGray;
+  border-radius: 10px;
+}
+.titreboite1 {
+  text-align: center;
+  color: BurlyWood;
+}
+
+.boite {
+  padding: 1em;
+  background: White;
+  color: black;
+  border: 1px solid #2A363B;
+  border-radius: 5px;
+}
+
+.titreboite {
+  text-align: center;
+  color: White;
+  background-color: #2A363B;
+  border: 0px solid #2A363B;
+  border-radius: 5px;
+  
+}
+
+/* Headers */
+
+h1 {
+  font-family: Helvetica;
+  font-size: 20pt;
+  color: DarkSlateGray;
+  text-align: center;
+  text-transform: uppercase;
+
+}
+
+</style>
+
+<script>
+$(document).ready(function(){
+    $('[data-toggle="popover"]').popover(); 
+});
+</script>
+
+<center> 
+
+<hr style="border:1.5px solid grey">
+
+![](https://corentinducloux.fr/dossier_img/mecen_transparent.png){#id .class width=30% height=25%}
+![](https://corentinducloux.fr/dossier_img/ut.png){#id .class width=40% height=25%}
+
+<hr style="border:1.5px solid grey">
+
+</center> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, out.width = "85%", fig.align = "center")
+```
+
+*Note* : le document **HTML** est interactif et utilise la librairie `plotly`[^1] pour les représentations graphiques
+
+[^1]: Lien vers la page de présentation de la librairie : https://plotly.com/r/
+
+## PACKAGES
+
+```{r import_lib, class.source = "fold-show"}
+library(haven)
+library(tidyverse)
+library(kableExtra)
+library(plm)
+library(lmtest)
+library(DT)
+library(stargazer)
+library(plotly)
+library(caschrono)
+library(forecast)
+library(stats)
+library(tseries)
+library(htmltools)
+```
+
+```{r colors, echo=FALSE, warning=FALSE}
+col_table <- "#2A363B"
+
+set.seed(1)
+```
+
+## EXERCICE I
+
+### Importation des données
+
+```{r data_import}
+setwd("C:/Users/tcrsm/Documents/R data")
+df <- read_dta("data_V3.dta")
+```
+
+```{r data_table, echo = FALSE}
+datatable(df, options = list(
+  scrollX = TRUE,
+  scrollCollapse = TRUE,
+  language = list(url = '//cdn.datatables.net/plug-ins/1.10.11/i18n/French.json'),
+  autoWidth = FALSE, 
+                                 
+  columnDefs = list(list(width = '200px', targets = c(1, 3))),
+  initComplete = JS(
+    "function(settings, json) {",
+    "$(this.api().table().header()).css({'background-color': '#2A363B', 'color': '#fff'});",
+    "}")),
+  
+  caption = htmltools::tags$caption(
+    style = 'caption-side: bottom; text-align: center;',
+    'Tableau : ', htmltools::em('Données sur les dépenses en soins dentaires')
+  )
+)
+```
+
+:::: {.boite}
+::: {.titreboite}
+**Informations générales sur le panel**
+:::
+
+**Avant de répondre aux questions, il convient de vérifier quelques informations**
+
+En premier lieu, la commande `length(unique(df$id))` nous retourne **`r length(unique(df$id))`** individus. Puisque l'étude se déroule sur 5 années, on peut en conclure que le panel n'est pas *cylindré* car une partie des individus cessent d'être observés avant la dernière date du panel. 
+
+```{r dim_panel}
+dim <- pdim(df, index = c("id", "year"))
+
+
+table_panel <- rbind(c("$n$","$T$","$N$","Type"),
+                     c(dim$nT$n,dim$nT$T,dim$nT$N,"non-cylindré"))
+
+table_panel %>% 
+  kable(booktabs = T,escape = F,align = 'c') %>%
+  add_header_above(header = c("Résumé :" = 4),
+                   color = col_table, align = "c", italic = T, bold = T) %>%
+    kable_styling(full_width = F, position = "center",
+                  bootstrap_options = c("striped", "hover"))
+```
+
+***
+
+- On remarque aussi que **`r sum(df$age == 996)`** individus ont *996* ans. Par définition, cela est impossible. De plus, **`r sum(df$educyr > 90)`** individus ont étudié pendant plus de *90* ans ! Nous allons devoir nettoyer les données brutes.
+
+::::
+
+### Question 1 :
+:::: {.boite}
+::: {.titreboite}
+En quoi est-ce intéressant d’analyser les déterminants des dépenses en soin dentaire ?
+:::
+
+- Analyser les déterminants des dépenses en soins dentaires peut être intéressant
+pour comprendre les facteurs qui les influencent afin de tenter de comprendre comment certaines politiques et systèmes de soins peuvent les affecter. Par exemple, on peut se demander si le fait de posséder ou non une assurance santé augmente en moyenne le coût des soins, ou bien si le fait de bénéficier de l'assurance fournie par l'état fédéral (*Medicare*) a un impact sur ce type de dépenses.
+
+::::
+
+### Question 2 :
+
+:::: {.boite}
+::: {.titreboite}
+**Tableau de statistiques descriptives avec les variables dont vous disposez**
+:::
+
+> Nettoyage des données préalable
+
+```{r cleaner}
+df_clean <- filter(df, age != 996 & educyr < 90)
+```
+
+> Tableaux
+
+```{r table_num}
+std <- c(sd(df_clean$age), sd(df_clean$educyr), sd(df_clean$inctot), sd(df_clean$dvexptot))
+part_1 <- do.call(cbind, lapply(df_clean[c(2,4,6,9)], summary))
+
+table_numeric <- round(rbind(part_1,std))
+
+table_numeric[1:6,2] <- paste(table_numeric[1:6,2],"années")
+table_numeric[1:6,3] <- paste(table_numeric[1:6,3],"$")
+table_numeric[1:6,4] <- paste(table_numeric[1:6,4],"$")
+
+table_numeric[7,] <- paste("(", table_numeric[7,] ,")")
+
+rownames(table_numeric) <- c("Minimum", "1° Quartile","Médiane","Moyenne",
+                    "3° Quartile","Maximum","Ecart-type")
+
+colnames(table_numeric) <- c("Age", "Edcuation",
+                             "Revenu personnel","Dépenses en soins dentaires")
+
+table_numeric %>% 
+  kable(align = "c") %>%
+  add_header_above(c(" " = 1, "Tableau 1 : Variables numériques" = 4), 
+                     color = col_table, align = "c", italic = T, bold = T) %>%
+  row_spec(7, italic = T) %>% 
+  column_spec(1, bold = T) %>% 
+  kable_styling(full_width = F, position = "center",
+                bootstrap_options = c("striped", "hover"))
+```
+
+```{r df_ind, include = FALSE}
+df_ind <- df_clean[, c(3, 5, 7, 8)]
+
+df_ind$hinotcov <- factor(df_ind$hinotcov, labels = c("insured", "not_insured"), 
+                            levels = c(1, 2))
+df_ind$himcare <- factor(df_ind$himcare, labels = c("medicare_no", "medicare_yes"), 
+                           levels = c(1, 2))
+df_ind$sex <- factor(df_ind$sex, labels = c("man", "woman"), 
+                       levels = c(1, 2))
+df_ind$workev <- factor(df_ind$workev, labels = c("never_worked", "already_worked", "no_answer", 
+                                                      "unverified", "doesnt_know"), 
+                          levels = c(1, 2, 7, 8, 9))
+```
+
+```{r year_table}
+table_year <- df_clean %>% 
+  group_by(year) %>% 
+  summarise(nombre_d_individus = n()) %>% 
+  mutate(proportion = paste(round((nombre_d_individus / sum(nombre_d_individus)*100), 2), "%"))
+
+table_year %>% 
+  kable(align = "c", escape = F,
+        col.names = c("Année", "$n$", "Proportion")) %>%
+  add_header_above(c("Tableau 2 : Variables qualitatives" = 3), 
+                     color = col_table, align = "c", italic = T, bold = T) %>%
+  kable_styling(full_width = F, 
+                position = "center",
+                bootstrap_options = c("striped", "hover")) %>% 
+  column_spec(1, bold = T) %>% 
+  column_spec(2, popover = paste("La nombre de répondants pour l'année", 2015:2019)) %>% 
+  column_spec(3, popover = paste("La proportion de répondants pour l'année", 2015:2019))
+```
+
+```{r sex_table}
+table_sex <- df_ind %>% 
+  group_by(sex) %>% 
+  summarise(nombre_d_individus = n()) %>% 
+  mutate(proportion = paste(round((nombre_d_individus / sum(nombre_d_individus)*100), 2), "%"))
+
+table_sex %>% 
+  kable(align = "c", escape = F,
+        col.names = c("Sexe", "$n$", "Proportion")) %>%
+  add_header_above(c("Tableau 3 : Variables qualitatives" = 3), 
+                     color = col_table, align = "c", italic = T, bold = T) %>% 
+  kable_styling(full_width = F,
+                position = "center",
+                bootstrap_options = c("striped", "hover")) %>%
+  column_spec(1, bold = T) %>% 
+  column_spec(2, popover = c("Le nombre d'hommes ayant participé au sondage au total",
+                             "Le nombre de femmes ayant participé au sondage au total")) %>% 
+  column_spec(3, popover = c("La proportion d'hommes", 
+                             "La proportion de femmes")) %>%
+  column_spec(1, bold = T)
+```
+
+```{r work_table}
+table_work <- df_ind %>% 
+  group_by(workev) %>% 
+  summarise(nombre_d_individus = n()) %>% 
+  mutate(proportion = paste(round((nombre_d_individus / sum(nombre_d_individus)*100), 2), "%"))
+
+table_work %>% 
+  kable(align = "c", escape = F,
+        col.names = c("A déjà travaillé ?", "$n$", "Proportion")) %>% 
+  add_header_above(c("Tableau 4 : Variables qualitatives" = 3), 
+                     color = col_table, align = "c", italic = T, bold = T) %>% 
+  kable_styling(full_width = F, 
+                position = "center",
+                bootstrap_options = c("striped", "hover"))  %>% 
+  column_spec(1, bold = T) %>% 
+  column_spec(3, popover = c("La proportion d'individus n'ayant jamais travaillé.",
+                             "La proportion d'individus ayant déjà travaillé.",
+                             "La proportion d'individus ayant refusé de répondre.",
+                             "La proportion d'individus non vérifiés.",
+                             "La proportion d'individus qui ne savent pas.")) %>% 
+  column_spec(2, popover = c("Le nombre d'individus n'ayant jamais travaillé.",
+                             "Le nombre d'individus ayant déjà travaillé.",
+                             "Le nombre d'individus ayant refusé de répondre.",
+                             "Le nombre d'individus non vérifiés.",
+                             "Le nombre d'individus qui ne savent pas."))
+```
+
+```{r hi_table}
+table_hi <- df_ind %>% 
+  group_by(hinotcov) %>% 
+  summarise(nombre_d_individus = n()) %>% 
+  mutate(paste(round((nombre_d_individus / sum(nombre_d_individus)*100), 2), "%"))
+
+table_hi %>% 
+  kable(align = "c", escape = F,
+        col.names = c("Assurance santé ?", "$n$", "Proportion")) %>% 
+  add_header_above(c("Tableau 5 : Variables qualitatives" = 3), 
+                     color = col_table, align = "c", italic = T, bold = T) %>% 
+  kable_styling(full_width = F, 
+                position = "center",
+                bootstrap_options = c("striped", "hover"))  %>% 
+  column_spec(1, bold = T) %>% 
+  column_spec(1, popover = c("J'ai une assurance santé", 
+                             "Je n'ai pas d'assurance santé")) %>% 
+  column_spec(2, popover = c("Le nombre d'individus ayant une assurance santé", 
+                             "Le nombre d'individus n'ayant pas d'assurance santé")) %>% 
+  column_spec(3, popover = c("La proportion d'individus ayant une assurance santé",
+                             "La proportion d'individus n'ayant pas d'assurance santé"))
+```
+
+```{r medicare_table}
+table_medicare <- df_ind %>% 
+  group_by(himcare) %>% 
+  summarise(nombre_d_individus = n()) %>% 
+  mutate(paste(round((nombre_d_individus / sum(nombre_d_individus)*100), 2), "%"))
+
+table_medicare %>% 
+  kable(align = "c", escape = F,
+        col.names = c("Medicare ?", "$n$", "Proportion")) %>% 
+  add_header_above(c("Tableau 6 : Variables qualitatives" = 3), 
+                     color = col_table, align = "c", italic = T, bold = T) %>% 
+  kable_styling(full_width = F, 
+                position = "center",
+                bootstrap_options = c("striped", "hover"))  %>% 
+  column_spec(1, bold = T) %>% 
+  column_spec(1, popover = c("Je n'ai pas l'assurance Medicare", 
+                             "J'ai l'assurance Medicare")) %>% 
+  column_spec(2, popover = c("Le nombre d'individus n'ayant pas l'assurance Medicare", 
+                             "Le nombre d'individus ayant l'assurance Medicare")) %>% 
+  column_spec(3, popover = c("La proportion d'individus n'ayant pas l'assurance Medicare",
+                             "La proportion d'individus ayant l'assurance Medicare"))
+```
+
+***
+
+**Observations complémentaires :**
+
+- Le total des dépenses en soins dentaires sur la période 2015-1019 dans le panel s'élève à 31971075 $.
+- On remarque que pour la variable $workev$, les modalités *no_answer*, *unverified* et *doesnt_know* ont un poids très négligeable comparé aux deux modalités principales.
+- La majorité des individus interrogés ont une assurance santé (88.88 %).
+- 24.89 % des individus sont couverts pas l'assurance *Medicare*, soit $\dfrac{1}{4}$ de notre échantillon.
+
+:::: 
+
+
+### Question 3 :
+:::: {.boite}
+::: {.titreboite}
+**Estimer le modèle poolé suivant en corrigeant les écarts-types :**
+:::
+
+$$\beta_0 + \beta_1 age_{it} + \beta_2sex_{it} + \beta_3educyr_i + \beta_4inctot_{it} + \beta_5hinotcov_{it} + \beta_6workev_i + \beta_7himcare_{it} + \epsilon_{it}$$
+
+**RAPPEL :** Dans un modèle poolé, on observe toutes les données avec variation individuelle et temporelle. Dans ce modèle, on ne peut donc pas différencier la dimension inter et intra-individuelle.
+
+Il ne faut pas oublier de transformer les variables $workev$, $hinotcov$, $himcare$ et $sex$ en `factor` pour estimer correctement le modèle.
+
+```{r q3_1}
+df_clean$sex <- case_when(
+  df_clean$sex == 1 ~ "man",
+  df_clean$sex == 2 ~ "woman",
+)
+
+df_clean$hinotcov <- case_when(
+  df_clean$hinotcov == 1 ~ "insured",
+  df_clean$hinotcov == 2 ~ "not_insured",
+)
+
+df_clean$workev <- case_when(
+  df_clean$workev == 1 ~ "never_worked",
+  df_clean$workev == 2 ~ "already_worked",
+  df_clean$workev == 7 ~ "no_answer",
+  df_clean$workev == 8 ~ "unverified",
+  df_clean$workev == 9 ~ "doesnt_know",
+)
+
+df_clean$himcare <- case_when(
+  df_clean$himcare == 1 ~ "medicare_no",
+  df_clean$himcare == 2 ~ "medicare_yes",
+)
+
+View(df_clean)
+
+df_clean$workev <- as.factor(df_clean$workev)
+df_clean$hinotcov <- as.factor(df_clean$hinotcov)
+df_clean$himcare <- as.factor(df_clean$himcare)
+df_clean$sex <- as.factor(df_clean$sex)
+```
+
+```{r q3_2}
+pooled_corr <- plm(dvexptot ~ age + sex + educyr + inctot + hinotcov + workev + himcare,
+                   data = df_clean, model = "pooling", index = c("id", "year"))
+
+pooled_corr_2 <- coeftest(pooled_corr, vcov = vcovHC(pooled_corr, method = "arellano"))
+
+#stargazer(pooled_corr, pooled_corr_2, header = F, type = 'html', style = "all")
+```
+
+*(A gauche, le modèle standard et à droite, le modèle avec écarts-types corrigés ~ robuste)*
+
+***
+
+<center>
+
+![](https://corentinducloux.fr/dossier_img/stargazer_1.PNG){#id .class width=40% height=25%}
+</center>
+
+***
+
+- On s'aperçoit que presque tous les coefficients  $\beta_i$ sont significatifs au seuil de 1%.
+- Si l'âge de l'individu augmente de 1 an, le total des dépenses en soins dentaires augmente de 4.18 $ , *ceteris paribus*.
+- Le fait d'être une femme augmente de 61.7 $ le total des dépenses en soins dentaires par rapport aux hommes.
+- Une année d'éducation supplémentaire augmente de 26 $ les dépenses en soins dentaires, *ceteris paribus*.
+- Une augmentation de 1000 \$ du revenu total entraîne une augmentation de 2 \$ des dépenses en soins dentaires, *ceteris paribus*.
+- Le fait de ne pas avoir d'assurance santé réduit de 98.3 $ le total des dépenses en soins dentaires (cela peut s'expliquer par le fait que les gens qui n'ont pas d'assurance santé n'ont pas les moyens de faire des dépenses de santé).
+- Bénéficier de l'assurance *Medicare* augmente les dépenses en soins dentaires de 69.9 $.
+
+
+<span style="color:red">**Attention cependant**</span> $\Rightarrow$ sans hypothèse supplémentaire, l'estimateur MCO n'est pas convergent, car il ne tient pas compte du fait que certaines observations à différentes dates proviennent du même individu, ni du fait que certaines observations sur différents individus proviennent de la même date. 
+
+- Par ailleurs, le $R^2$ ajusté est très faible (0.024 donc 2.4% de la variance de la variable expliquée est expliquée par la variance des variables explicatives).
+
+
+::::
+
+### Question 4 :
+:::: {.boite}
+::: {.titreboite}
+**Réécrivez l’équation 1 dans le cadre d’un modèle à erreurs composées (ou effets aléatoires) :**
+:::
+
+Dans un modèle à **effets aléatoires**, les effets individuels $c_i$ ne sont pas corrélés aux variables explicatives. On suppose aussi que $c_i$ & $\epsilon_i$ sont *indépendants* et *identiquement distribués* :
+
+$$\left \{ \begin{array}{l}
+c_i \sim[c, (\sigma_c)^2] \\
+\epsilon_i \sim [0, (\sigma_\epsilon)^2]
+\end{array} \right.$$
+
+***
+
+On peut donc ré-écrire le modèle de la sorte :
+
+
+$$\beta_0 + \beta_1 age_{it} + \beta_2sex_{it} + \beta_3educyr_i + \beta_4inctot_{it} + \beta_5hinotcov_{it} + \beta_6workev_i + \beta_7himcare_{it} + u_{it}$$
+Avec $u_{it} = c_i + \epsilon_{it} \Rightarrow$ Les effets fixes sont ici considérés comme les réalisations d'une *variable aléatoire*
+
+```{r q4, results = 'asis'}
+random_effect <- plm(dvexptot ~ age + sex + educyr + inctot + hinotcov + workev + himcare,
+                   data = df_clean, model = "random", effect = "individual",
+                   index = c("id", "year"))
+
+random_effect_corr <- coeftest(random_effect, vcov = vcovHC(random_effect, method = "arellano"))
+
+#stargazer(random_effect, random_effect_corr, header = F)
+```
+
+*(A gauche, le modèle standard et à droite, le modèle avec écarts-types corrigés ~ robuste)*
+
+***
+
+<center>
+![](https://corentinducloux.fr/dossier_img/stargazer_2.PNG){#id .class width=35% height=25%}
+</center>
+
+
+::::
+
+### Question 5 :
+:::: {.boite}
+::: {.titreboite}
+**Comparer les résultats à ceux obtenus par les MCO :**
+:::
+
+```{r q5}
+#stargazer(pooled_corr_2, random_effect_corr, header = F, column.labels = c("pooling","random effects"))
+```
+
+<center>
+![](https://corentinducloux.fr/dossier_img/stargazer_3.PNG){#id .class width=35% height=25%}
+</center>
+
+***
+
+- Les paramètres estimés sont à peu près similaires.
+- Les écarts-types robustes sont eux aussi très proches entre les deux modèles.
+- Le gain d’efficience par rapport à l’estimateur poolé n’est pas vraiment élevé.
+
+::::
+
+### Question 6 :
+:::: {.boite}
+::: {.titreboite}
+**Ecrivez et estimez le modèle à EF individuels. Comparez les résultats à ceux obtenus avec le modèle à EA :**
+:::
+
+$$\beta_0 + \beta_1 age_{it} + \beta_2sex_{it} + \beta_3educyr_i + \beta_4inctot_{it} + \beta_5hinotcov_{it} + \beta_6workev_i + \beta_7himcare_{it} + \underbrace{c_i}_{EF} + \epsilon_{it}$$
+
+- On choisit un modèle sur l'écart à la moyenne *(within)*. En ré-écrivant, on obtient :
+
+
+$$dvexptot_{it}-\overline{dvexptot_i} = (age_{it} - \overline{age_i})\beta_1 + (inctot_{it} - \overline{inctot_i} )\beta_4 + \dots + (\epsilon_{it}- \bar{\epsilon_i})$$
+$\Rightarrow$ Dans ce modèle, les effets fixes individuels $c_i$ sont éliminés. De plus, on ne peut pas estimer
+l’effet des variables explicatives fixes dans le temps ($sex$, $educyr$) !
+
+```{r q6}
+
+fixed_effect <- plm(dvexptot ~ age + sex + educyr + inctot + hinotcov + workev + himcare,
+                   data = df_clean, model = "within", effect = "individual", index = c("id", "year"))
+
+fixed_effect_corr <- coeftest(fixed_effect, vcov = vcovHC(fixed_effect, method = "arellano"))
+
+#stargazer(fixed_effect, fixed_effect_corr, header = F, column.labels = c("default","robust"))
+
+```
+
+<center>
+![](https://corentinducloux.fr/dossier_img/stargazer_4.PNG){#id .class width=35% height=25%}
+</center>
+
+***
+
+- Cette fois, avec le modèle à **effets fixes**, on obtient seulement 3 coefficients statistiquement significatifs ($sex$, $inctot$ et $himcare$).
+- Le sexe devrait être une caractéristique invariante au cours du temps, mais 3 individus ont changé de genre entre 2015 & 2019 dans le jeu de données *(plus de détail dans la question 10)*. Par conséquent, le coefficient associé est estimé avec très peu d'observations et devrait être interprété avec précaution.
+- La principale différence avec le modèle à effets aléatoires, outre la non-estimation du coefficient associé à l'éducation, est que le coefficient associé à $himcare$ dans le modèle à effets fixes est beaucoup plus important.
+
+::::
+
+### Question 7 :
+:::: {.boite}
+::: {.titreboite}
+**Entre le modèle à effets aléatoires, et le modèle à effets fixes, quel modèle choisiriez-vous ?**
+:::
+
+Pour déterminer le choix du modèle à utiliser, on peut utiliser le **Test de Hausman** :
+
+$$\left \{ \begin{array}{l}
+H_0 : plim(\hat \theta - \tilde \theta) = 0 \\
+H_1 : plim(\hat \theta - \tilde \theta) \ne 0
+\end{array} \right.$$
+
+- Si on ne rejette pas $H_0$, les effets individuels $c_i$ ne sont pas corrélés aux variables explicatives.
+- Si on rejette $H_0$, les effets individuels $c_i$ sont corrélés aux variables explicatives.
+
+```{r q7}
+h_test <- phtest(fixed_effect, random_effect)
+
+h_table <- rbind(c("Statistique","$p-value$","$ddl$","Alternative"),
+                     c(round(h_test$statistic[[1]],2), round(h_test$p.value,5),
+                       h_test$parameter[[1]], h_test$alternative))
+
+h_table %>% 
+  kable(booktabs = T, escape = F, align = 'c') %>%
+  add_header_above(header = c("Test de Hausman d'endogénéité :" = 4),
+                   color = col_table, align = "c", italic = T, bold = T) %>%
+    kable_styling(full_width = F, position = "center",
+                  bootstrap_options = c("striped", "hover"))
+```
+
+***
+
+- La $p-value$ est bien inférieure à 0.05. On rejette $H_0$, c'est à dire que le **modèle à effets fixes** est préférable dans ce cas.
+
+::::
+
+### Question 8 :
+:::: {.boite}
+::: {.titreboite}
+**Parmi l'ensemble des modèles présentés, quel modèle choisiriez-vous ?**
+:::
+
+- La question 7 et l'utilisation du Test d'Hausman a montré que les effets individuels $c_i$ étaient corrélés aux variables explicatives. Il convient donc de comparer le modèle à **effets fixes** et le **modèle poolé**.
+- Le modèle poolé n'est pas adapté à la structure des données car certains paramètres varient entre les individus, cela signifie que l'estimateur n'est pas **asymptotiquement sans biais** !
+- Il faut donc choisir le modèle à **effets fixes**, même si celui-ci ne nous permet pas d'estimer les paramètres constants dans le temps.
+
+::::
+
+### Question 9 :
+:::: {.boite}
+::: {.titreboite}
+**Comment synthétiser les résultats concernant les dépenses en soins dentaires ?**
+:::
+
+<center>
+![](https://corentinducloux.fr/dossier_img/stargazer_5.PNG){#id .class width=40% height=25%}
+</center>
+
+***
+
+- On rappelle que l'on a choisi le modèle à **effets fixes** (d'après la question 7 & 8).
+- Le fait d’être une femme réduit de 38.7 $ le total des dépenses en soins dentaires par rapport aux hommes.
+- Une augmentation de 1000 \$ du revenu total entraîne une augmentation de 1 \$ des dépenses en soins dentaires, *ceteris paribus*.
+- Le fait de ne pas posséder d’assurance santé ne joue pas un rôle significatif dans ce modèle.
+- En revanche, le fait de posséder l'assurance *Medicare* entraîne une augmentation moyenne des dépenses en soins dentaires de 238.4 $.
+
+***
+
+```{r plots}
+depenses_moy <- aggregate(data = df_clean, 
+          dvexptot ~ age,
+          mean)
+
+df_insured <- df_clean %>% filter(hinotcov == "insured")
+depenses_moy_insured <- aggregate(data = df_insured, 
+          dvexptot ~ age,
+          mean)
+
+df_not_insured <- df_clean %>% filter(hinotcov == "not_insured")
+depenses_moy_not_insured <- aggregate(data = df_not_insured, 
+          dvexptot ~ age,
+          mean)
+
+plot_ly(depenses_moy, 
+        x = ~ age, 
+        y = ~ dvexptot,
+        type = 'scatter', 
+        mode = 'lines',
+        name = "Dépense totale") %>% 
+  add_trace(data = depenses_moy_not_insured,
+            x = ~ age,
+            y = ~ dvexptot,
+            type = 'scatter', 
+            mode = 'lines',
+            name = "not_insured") %>%
+  add_trace(data = depenses_moy_insured, 
+            x = ~ age, 
+            y = ~ dvexptot,
+            type = 'scatter', 
+            mode = 'lines',
+            name = "insured") %>% 
+  layout(title = "Dépense moyenne en soins dentaires en fonction de l'âge \n et de la possession d'une assurance santé",
+         xaxis = list(title = "Age"),
+         yaxis = list(title = "Dépense moyenne en soins dentaires")) %>% config(displayModeBar = F)
+```
+
+***
+
+- Sans que cela ne soit significatif dans le modèle à **effets fixes**, on peut voir que plus un individu est agé, plus ses dépenses en soin dentaire augmentent. Cela peut s'expliquer par le fait qu'au fil des années les besoins en soins dentaires augmentent jusqu'à un certain seuil où plus aucune dépense n'est nécessaire (*exemple :* port d'une prothèse dentaire).
+
+- Une observation revient souvent concernant le fait que les bénéficiaires de l'assurance *Medicare* ont des dépenses en soins dentaires plus élevées. Cela peut s'expliquer par le fait que ceux-ci ont tendance à mieux se soigner car ils bénéficient d'une prise en charge (partielle) de la part de l'Etat. A l'inverse, les individus sans assurance évitent les dépenses en soins dentaires pouvant s'avérer très coûteuses car ils devront s'acquitter de la totalité du montant de la prestation. 
+
+::::
+
+### Question 10 :
+:::: {.boite}
+::: {.titreboite}
+**Inclure et exclure les réponses croisées incohérentes de certaines variables pour quelques individus :**
+:::
+
+- On sait que 3 individus ont changé de genre dans le panel. 
+- `df_clean %>% group_by(id) %>% mutate(changed_gender = n_distinct(sex) > 1) %>% ungroup ()` permet de créer la variable $changed\_gender$ pour les détecter.
+- On crée aussi un filtre pour ne regarder que les modalités *already_worked* & *never_worked* de la variable $workev$.
+
+**On obtient alors les modèles suivants :**
+
+```{r q10}
+df_clean <- df_clean %>% group_by(id) %>% 
+  mutate(changed_gender = n_distinct(sex) > 1) %>% ungroup () 
+
+df_clean[df_clean$changed_gender == "TRUE",]
+
+filter_work <- (df_clean$workev == "already_worked" | df_clean$workev == "never_worked")
+
+df_clean_2 <- df_clean[filter_work,]
+
+df_clean_2 <- df_clean_2[df_clean_2$changed_gender == FALSE,]
+
+
+fixed_effect_2 <- plm(dvexptot ~ age + sex + educyr + inctot + hinotcov + workev + himcare,
+                   data = df_clean_2, model = "within", effect = "individual", index = c("id", "year"))
+
+random_effect_2 <- plm(dvexptot ~ age + sex + educyr + inctot + hinotcov + workev + himcare,
+                   data = df_clean_2, model = "random", effect = "individual",
+                   index = c("id", "year"))
+
+h_test_2 <- phtest(fixed_effect_2, random_effect_2)
+
+h_table_2 <- rbind(c("Statistique","$p-value$","$ddl$","Alternative"),
+                     c(round(h_test_2$statistic[[1]],2), round(h_test_2$p.value,5),
+                       h_test_2$parameter[[1]], h_test_2$alternative))
+```
+
+<center>
+![](https://corentinducloux.fr/dossier_img/stargazer_6.PNG){#id .class width=40% height=25%}
+</center>
+
+```{r q10_2}
+
+h_table_2 %>% 
+  kable(booktabs = T, escape = F, align = 'c') %>%
+  add_header_above(header = c("Test de Hausman d'endogénéité :" = 4),
+                   color = col_table, align = "c", italic = T, bold = T) %>%
+    kable_styling(full_width = F, position = "center",
+                  bootstrap_options = c("striped", "hover"))
+
+```
+
+***
+
+- Désormais, le coeffcient associé à la variable $sex$ ne peut plus être estimé pour le modèle à **effets fixes** car la variable est une caractéristique constante au cours du temps. La significativité des autres variables ne change pas.
+- Que ce soit pour le modèle à **effets fixes** ou le modèle à **effets aléatoires**, garder ou retirer les 3 individus ne change que de manière très marginale les résultats $\Rightarrow$ les coefficients estimés restent très proches de ceux estimés aux questions précédentes.
+- Enfin, on vérifie avec un test de Hausman si les effets individuels $c_i$ sont toujours corrélés aux variables explicatives et on trouve (sans surprise) que c'est effectivement le cas. Dès lors, il faut continuer à préférer le modèle à **effets fixes**.
+::::
+
+
+## EXERCICE II
+
+### Question 1:
+:::: {.boite}
+::: {.titreboite}
+**Simuler $Y_t = 0.5Y_{t-1} + 0.6\epsilon_{t-1} + \epsilon_t$, de longueur $T = 200$**
+:::
+
+On simule $Y_t$ avec la commande `arima.sim(list(ar = 0.5, ma = 0.6), n = t)`
+
+```{r exo2_q1}
+t = 200
+
+Yt <- arima.sim(list(ar = 0.5, ma = 0.6), n = t)
+
+y <- Yt[1:length(Yt)] ; x <-  c(1:t)
+ARMA_data <- data.frame(x,y)
+
+plot_ly(data = ARMA_data, x = x, y = y, type = 'scatter', mode = 'lines') %>% 
+  layout(title = "Chronogramme de la trajectoire simulée",
+         xaxis = list(title = "T"),
+         yaxis = list(title = "")) %>% config(displayModeBar = F)
+```
+
+***
+
+- *Remarque :* la série est stationnaire.
+::::
+
+### Question 2:
+:::: {.boite}
+::: {.titreboite}
+**Représenter la fonction d'autocorrélation et d'autocorrélation partielle :**
+:::
+
+```{r exo2_q2_acf}
+acf_1 <- acf(Yt, plot = F)
+pacf_1 <- pacf(Yt, plot = F)
+
+acf_1_lag <- acf_1$lag
+acf_1_points <- acf_1$acf
+
+pacf_1_lag <- pacf_1$lag
+pacf_1_points <- pacf_1$acf
+
+conf_int <-2/sqrt(t)
+
+acf_1_data <- data.frame(acf_1_lag, acf_1_points)
+pacf_1_data <- data.frame(pacf_1_lag, pacf_1_points)
+
+plot_ly(data = acf_1_data, x = ~acf_1_lag, y = ~acf_1_points, type = "bar") %>% 
+  layout(title = "Fonction d'autocorrélation de la série",
+         xaxis = list(title = "Lag"),
+         yaxis = list(title = "ACF"),
+         shapes = list(list(type = "line",
+                            x0 = -0.5, y0 = conf_int, x1 = 24,
+                            y1 = conf_int, line = list(color = "red", dash = "dot")),
+                       list(type = "line", x0 = -0.5, y0 = -conf_int, x1 = 24,
+                            y1 = -conf_int, line = list(color = "red", dash = "dot")),
+                       list(type = "rect", x0 = -0.5, x1 = 24, y0 = conf_int,
+                            y1 = -conf_int, yref = "y",
+                            fillcolor = "red", opacity = 0.1))) %>% config(displayModeBar = F)
+```
+
+- On peut voir qu'il y a un pic important au niveau du *lag* 1 qui diminue après quelques *lags* $\Rightarrow$ cela signifie qu'il y a un terme autorégressif dans les données. La série est donc probablement corrélée à elle-même pour des retards positifs.
+
+```{r exo2_q2_pacf}
+plot_ly(data = pacf_1_data, x = ~pacf_1_lag, y = ~pacf_1_points, type = "bar") %>% 
+  layout(title = "Fonction d'autocorrélation partielle de la série",
+         xaxis = list(title = "Lag"),
+         yaxis = list(title = "PACF"),
+         shapes = list(list(type = "line",
+                            x0 = 0, y0 = conf_int, x1 = 24,
+                            y1 = conf_int, line = list(color = "red", dash = "dot")),
+                       list(type = "line", x0 = 0, y0 = -conf_int, x1 = 24,
+                            y1 = -conf_int, line = list(color = "red", dash = "dot")),
+                       list(type = "rect", x0 = 0, x1 = 24, y0 = conf_int,
+                            y1 = -conf_int, yref = "y",
+                            fillcolor = "red", opacity = 0.1))) %>% config(displayModeBar = F)
+```
+
+***
+
+- On peut voir qu'il y a un pic important au niveau du *lag* 1 qui diminue après quelques *lags* $\Rightarrow$ cela signifie qu'il y a un terme de moyenne mobile dans les données.
+
+::::
+
+### Question 3:
+:::: {.boite}
+::: {.titreboite}
+**Ajustez un ARMA(1,1), un AR(1) et un MA(1)**
+:::
+
+```{r exo2_q3, class.source = "fold-show"}
+ARMA11 <- arima(Yt, order = c(1,0,1))
+AR1 <- arima(Yt, order = c(1,0,0))
+MA1 <- arima(Yt, order = c(0,0,1))
+```
+
+***
+
+```{r exo2_q3_2}
+sum_ARMA11 <- summary(ARMA11)
+sum_AR1 <- summary(AR1)
+sum_MA1 <- summary(MA1)
+
+table_models <- round(rbind(
+c(sum_ARMA11$coef[[1]], sum_ARMA11$coef[[2]], sum_ARMA11$coef[[3]]),
+c(sum_AR1$coef[[1]], 0, sum_AR1$coef[[2]]),
+c(0, sum_MA1$coef[[1]], sum_MA1$coef[[2]])),2)
+
+rownames(table_models) <- c("$ARMA(1,1)$", "$AR(1)$", "$MA(1)$")
+colnames(table_models) <- c("Coefficient $AR$", "Coefficient $MA$", "Constante")
+
+table_models %>% kable(booktabs = T, escape = F, align = 'c') %>%
+  add_header_above(header = c("Résumé des 3 modèles :" = 4),
+                   color = col_table, align = "c", italic = T, bold = T) %>%
+    kable_styling(full_width = F, position = "center",
+                  bootstrap_options = c("striped", "hover"))
+```
+
+***
+
+- On obtient pour le modèle $ARMA(1,1) \Rightarrow Y_t = 0.47Y_{t-1} + 0.61\epsilon_{t-1} + \epsilon_t + 0.18$
+- On obtient pour le modèle $AR(1) \Rightarrow Y_t = 0.72Y_{t-1} + \epsilon_t + 0.20$
+- On obtient pour le modèle $MA(1) \Rightarrow Y_t = 0.88\epsilon_{t-1} + \epsilon_t + 0.17$
+
+::::
+
+### Question 4:
+:::: {.boite}
+::: {.titreboite}
+**Les résidus sont-ils des bruits blancs pour les trois modèles ?**
+:::
+```{r exo2_q4}
+residus_ARMA <- Box.test.2(ARMA11$residuals, 1:24)
+residus_AR <- Box.test.2(AR1$residuals, 1:24)
+residus_MA <- Box.test.2(MA1$residuals, 1:24)
+
+table_pvalue <- rbind(
+      c(min(residus_ARMA[,2]), median(residus_ARMA[,2]),
+        mean(residus_ARMA[,2]), max(residus_ARMA[,2])),
+      c(min(residus_AR[,2]), median(residus_AR[,2]), mean(residus_AR[,2]), max(residus_AR[,2])),
+      c(min(residus_MA[,2]), median(residus_MA[,2]), mean(residus_MA[,2]), max(residus_MA[,2])))
+
+table_pvalue <- round(table_pvalue, 4)
+
+rownames(table_pvalue) <- c("$ARMA(1,1)$","$AR(1)$","$MA(1)$")
+colnames(table_pvalue) <- c("Minimum","Médiane","Moyenne","Maximum")
+
+table_pvalue %>% kable(booktabs = T, escape = F, align = 'c') %>%
+  add_header_above(header = c("Test de Box ~ p-values :" = 5),
+                   color = col_table, align = "c", italic = T, bold = T) %>%
+    kable_styling(full_width = F, position = "center",
+                  bootstrap_options = c("striped", "hover"))
+
+normal_res_ARMA <- shapiro.test(ARMA11$residuals)
+normal_res_AR <- shapiro.test(AR1$residuals)
+normal_res_MA <- shapiro.test(MA1$residuals)
+
+normal_res_table <- rbind(normal_res_ARMA$p.value,normal_res_MA$p.value,normal_res_AR$p.value)
+normal_res_table <- round(normal_res_table, 4)
+
+rownames(normal_res_table) <- c("$ARMA(1,1)$","$AR(1)$","$MA(1)$")
+colnames(normal_res_table) <- "$p-value$"
+
+normal_res_table %>% kable(booktabs = T, escape = F, align = 'c') %>%
+  add_header_above(header = c("Test de normalité des résidus" = 2),
+                   color = col_table, align = "c", italic = T, bold = T) %>%
+    kable_styling(full_width = F, position = "center",
+                  bootstrap_options = c("striped", "hover"))
+```
+
+***
+
+- Pour les 3 modèles étudiés, le test de Shapiro-Wilk ne rejète pas l'hypothèse de normalité des résidus.
+- Grâce au tableau résumant les $p-values$ issues du test de *Box-Pierce*, on s'aperçoit que le modèle $ARMA(1,1)$ possède une $p-value$ > 0.05 de manière consistante, à tous les retards étudiés $\Rightarrow$ les résidus forment un **bruit blanc**
+- A contrario, dans les modèles $AR(1)$ et $MA(1)$, les résidus ne sont pas des bruits blancs.
+
+::::
+
+
+### Question 5:
+:::: {.boite}
+::: {.titreboite}
+**Quel autre critère pourriez-vous utiliser pour choisir entre les 3 modèles ?**
+:::
+
+On peut utiliser les critères d'information tel que celui d'Akaike ($AIC$) ou celui de Scharwz ($SBC$).
+
+- Dans notre cas nous allons utiliser l'$AIC$ afin de savoir quel modèle a le meilleur pouvoir prédictif. 
+
+**RAPPEL : **$AIC = ln\left(\frac{SCR_{\epsilon}}{T}\right)+ \frac{2(p+q)}{T}$
+Avec $SCR_{\epsilon}$ la somme des carrés des résidus de l'$ARMA(p,q)$.
+
+- Plus l'$AIC$ est faible, plus le modèle est considéré comme étant de bonne qualité.
+```{r exo2_q5}
+data.frame(Modèle = c("$ARMA(1,1)$", "$AR(1)$", "$MA(1)$"),
+           AIC = c(round(ARMA11$aic, 1), round(AR1$aic, 1), round(MA1$aic, 1))) %>% 
+  kable(booktabs = T, escape = F, col.names = c("Modèle","$AIC$")) %>%
+  add_header_above(header = c("Comparaison des AIC" = 2),
+                   color = col_table, align = "c", italic = T, bold = T) %>%
+  kable_styling(full_width = F,
+                position = "center",
+                bootstrap_options = c("striped", "hover")) %>% 
+  column_spec(1, bold = T) %>% 
+  row_spec(1, color = "darkgreen")
+```
+
+***
+
+Le modèle que nous allons choisir est le modèle $ARMA(1,1)$ car celui-ci a l'$AIC$ le plus faible.
+::::
+
+### Question 6:
+:::: {.boite}
+::: {.titreboite}
+**Est-ce cohérent avec le modèle de la question 1 ?**
+:::
+
+Notre choix semble cohérent avec le modèle de la question 1 car la trajectoire simulée est celle d'un modèle $ARMA(0.5, 0.6)$. 
+
+Il est donc logique que le modèle le plus proche entre un $ARMA(1,1)$, un $AR(1,0)$ et un $MA(0,1)$ soit le $ARMA(1,1)$.
+
+En effet il est normal qu'un modèle auto-régressif à moyenne mobile estime mieux qu'un modèle seulement auto-regressif ou seulement à moyenne mobile.
+
+```{r}
+estim11 <- arma(Yt, order = c(1, 1))
+estim10 <- arma(Yt, order = c(1, 0))
+estim01 <- arma(Yt, order = c(0, 1))
+
+plot_ly(data = ARMA_data, x = x, y = y, type = 'scatter', mode = 'lines',
+        name = "Modèle initial",
+        line = list(color = 'rgb(0, 0, 255)')) %>% 
+  layout(title = "Chronogramme de la trajectoire simulée pour chaque modèle",
+         xaxis = list(title = "T"),
+         yaxis = list(title = "")) %>% config(displayModeBar = F) %>%
+  add_lines(y = estim11$fitted.values, name = "ARMA(1,1)",
+            line = list(color = 'rgb(255, 0, 0)')) %>% 
+  add_lines(y = estim10$fitted.values, name = "AR(1)",
+            line = list(color = 'rgb(255, 165, 0)')) %>% 
+  add_lines(y = estim01$fitted.values, name = "MA(1)",
+            line = list(color = 'rgb(224, 213, 71)'))
+```
+
+- On peut voir que les prédictions avec un modèle $ARMA(1,1)$ sont les plus proches de notre modèle initial.
+::::
+
