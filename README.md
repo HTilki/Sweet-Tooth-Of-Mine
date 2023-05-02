@@ -1,7 +1,7 @@
 # Sweet-Tooth-Of-Mine
 Analyse des dépenses en soins dentaires aux USA
 
-Réalisé par *[Hassan TILKI](https://github.com/aybuke-b)* & *[Corentin DUCLOUX](https://github.com/CDucloux)*
+Réalisé par *[Hassan TILKI](https://github.com/HTilki)* & *[Corentin DUCLOUX](https://github.com/CDucloux)*
 
 Le fichier `HTML` contient l'ensemble de l'analyse $-$ Bonne lecture !
 
